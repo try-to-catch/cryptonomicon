@@ -2,7 +2,7 @@
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
     <div
       :class="{
-        hidden: !spinner,
+        hidden: !isPageLoading,
       }"
       class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center"
     >
@@ -53,13 +53,13 @@
               <span
                 v-for="coin in suggestedCoins"
                 :key="coin"
-                @click="coinSelect(coin)"
+                @click="addSelectedCoin(coin)"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
               >
                 {{ coin }}
               </span>
             </div>
-            <div v-if="coinExist" class="text-sm text-red-600">
+            <div v-if="isCoinExist" class="text-sm text-red-600">
               Такой тикер уже добавлен
             </div>
           </div>
@@ -86,15 +86,44 @@
         </button>
       </section>
 
-      <template v-if="tickers.length">
+      <hr class="w-full border-t border-gray-600 my-4" />
+
+      <section>
+        <span>Фильтр</span>
+        <input v-model="filter" type="text" class="mx-2" />
+
+        <!-- <hr class="w-full border-t border-gray-600 my-4" /> -->
+
+        <div>
+          <button
+            type="button"
+            @click="pageNumber -= 1"
+            v-if="pageNumber > 1"
+            class="mx-2 my-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          >
+            Назад
+          </button>
+
+          <button
+            type="button"
+            @click="pageNumber += 1"
+            v-if="haveNextPage"
+            class="mx-2 my-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          >
+            Вперед
+          </button>
+        </div>
+      </section>
+
+      <template v-if="tickerList.length">
         <hr class="w-full border-t border-gray-600 my-4" />
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
-            v-for="t in tickers"
+            v-for="t in tickerPaginate()"
             :key="t.name"
             @click="selected(t)"
             :class="{
-              'border-4': sel === t,
+              'border-4': selectedTicker === t,
             }"
             class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
           >
@@ -129,9 +158,9 @@
         </dl>
         <hr class="w-full border-t border-gray-600 my-4" />
       </template>
-      <section v-if="sel" class="relative">
+      <section v-if="selectedTicker" class="relative">
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
-          {{ sel.name }} - USD
+          {{ selectedTicker.name }} - USD
         </h3>
         <div class="flex items-end border-gray-600 border-b border-l h-64">
           <div
@@ -144,7 +173,7 @@
           ></div>
         </div>
         <button
-          @click="stopGraphInterval(sel)"
+          @click="stopInterval(selectedTicker)"
           type="button"
           class="absolute top-0 right-0"
         >
@@ -181,20 +210,67 @@ export default {
   data() {
     return {
       ticker: "",
-      tickers: [],
-      symbols: [],
-      sel: null,
-      graph: [],
-      graph_intevals: new Map(),
-      all_coins: [],
-      spinner: false,
+      tickerList: [],
+      selectedTicker: null,
+      selectedCoinList: [],
+      graphList: [],
+      tickerIntervalsList: new Map(),
+      possibleCoins: [],
+      isPageLoading: false,
       suggestedCoins: [],
-      coinExist: false,
+      isCoinExist: false,
+      pageNumber: 1,
+      haveNextPage: false,
+      filter: "",
     };
+  },
+  watch: {
+    filter: function () {
+      this.pageNumber = 1;
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${this.filter}&pageNumber=${this.pageNumber}`
+      );
+    },
+    pageNumber: function () {
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${this.filter}&pageNumber=${this.pageNumber}`
+      );
+    },
   },
 
   created: async function () {
-    this.spinner = true;
+    this.isPageLoading = true;
+
+    const windowData = Object.fromEntries(
+      new URL(window.location).searchParams.entries()
+    );
+
+    if (windowData.filter) {
+      this.filter = windowData.filter;
+    }
+
+    if (windowData.pageNumber) {
+      this.pageNumber = windowData.pageNumber;
+    }
+
+    const tickersData = localStorage.getItem("cryptonomiconTickers");
+
+    if (tickersData) {
+      this.tickerList = JSON.parse(tickersData);
+
+      this.tickerList.forEach((ticker) => {
+        this.selectedCoinList.unshift(ticker.name);
+
+        this.tickerIntervalsList.set(
+          ticker.name,
+          this.createTickersInterval(ticker.name)
+        );
+      });
+    }
     const f = await (
       await fetch(
         "https://min-api.cryptocompare.com/data/all/coinlist?summary=true"
@@ -204,14 +280,32 @@ export default {
     const data = f.Data;
 
     for (let item in data) {
-      this.all_coins.push(data[item].Symbol);
+      this.possibleCoins.push(data[item].Symbol);
     }
-    this.spinner = false;
+    this.isPageLoading = false;
   },
   methods: {
+    createTickersInterval(tickersName) {
+      return setInterval(async () => {
+        const f = await fetch(
+          `https://min-api.cryptocompare.com/data/price?api_key=332085343d8a65df11a3cd19b5de67a1eec48fca7b634bf58c2f8e77a8e7c88d&tsyms=USD&fsym=${tickersName}`
+        );
+
+        const data = await f.json();
+
+        this.tickerList.find((t) => t.name === tickersName).price =
+          data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
+
+        if (this.selectedTicker?.name == tickersName) {
+          this.graphList.push(data.USD);
+        }
+      }, 5000);
+    },
+
     add() {
       if (
-        !this.symbols.includes(this.ticker.toUpperCase()) &&
+        !this.selectedCoinList.includes(this.ticker.toUpperCase()) &&
+        this.possibleCoins.includes(this.ticker.toUpperCase()) &&
         this.ticker.length
       ) {
         const currentTicker = {
@@ -221,49 +315,45 @@ export default {
 
         this.ticker = "";
         this.suggestedCoins = [];
-        this.coinExist = false;
+        this.isCoinExist = false;
 
-        this.tickers.unshift(currentTicker);
-        this.symbols.unshift(currentTicker.name);
+        this.tickerList.unshift(currentTicker);
+        this.selectedCoinList.unshift(currentTicker.name);
 
-        this.graph_intevals.set(
+        localStorage.setItem(
+          "cryptonomiconTickers",
+          JSON.stringify(this.tickerList)
+        );
+
+        this.createTickersInterval(currentTicker.name);
+
+        this.tickerIntervalsList.set(
           currentTicker.name,
-          setInterval(async () => {
-            const f = await fetch(
-              `https://min-api.cryptocompare.com/data/price?api_key=332085343d8a65df11a3cd19b5de67a1eec48fca7b634bf58c2f8e77a8e7c88d&tsyms=USD&fsym=${currentTicker.name}`
-            );
-
-            const data = await f.json();
-
-            this.tickers.find((t) => t.name === currentTicker.name).price =
-              data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-
-            if (this.sel?.name == currentTicker.name) {
-              this.graph.push(data.USD);
-            }
-          }, 5000)
+          this.createTickersInterval(currentTicker.name)
         );
       } else {
-        this.coinExist = true;
+        this.isCoinExist = true;
       }
     },
 
-    stopGraphInterval(interval) {
-      clearInterval(this.graph_intevals.get(interval.name));
+    stopInterval(interval) {
+      clearInterval(this.tickerIntervalsList.get(interval.name));
 
-      this.graph_intevals.delete(interval.name);
+      this.selectedTicker = null;
+
+      this.tickerIntervalsList.delete(interval.name);
     },
 
-    coinSelect(symbol) {
+    addSelectedCoin(symbol) {
       this.ticker = symbol;
       this.add();
     },
 
     findCoins() {
-      this.coinExist = false;
+      this.isCoinExist = false;
       this.suggestedCoins = [];
       if (this.ticker.length) {
-        this.suggestedCoins = this.all_coins
+        this.suggestedCoins = this.possibleCoins
           .filter((coin) => {
             if (this.suggestedCoins.length >= 4) {
               return false;
@@ -274,29 +364,43 @@ export default {
       }
     },
 
-    handleDelete(tickerToRemouve) {
-      if (this.sel?.name == tickerToRemouve.name) {
-        this.stopGraphInterval(tickerToRemouve);
-        this.sel = null;
+    handleDelete(ticker) {
+      if (this.selectedTicker?.name == ticker.name) {
+        this.stopInterval(ticker);
+        this.selectedTicker = null;
       }
-      this.tickers = this.tickers.filter((t) => t !== tickerToRemouve);
+      this.tickerList = this.tickerList.filter((t) => t !== ticker);
     },
 
     selected(ticker) {
-      this.sel = ticker;
-      this.graph = [];
+      this.selectedTicker = ticker;
+      this.graphList = [];
     },
 
     normalizeGraph() {
-      const [max, min] = [Math.max(...this.graph), Math.min(...this.graph)];
+      const [max, min] = [
+        Math.max(...this.graphList),
+        Math.min(...this.graphList),
+      ];
 
-      return this.graph.map((price) => {
-        if (new Set(this.graph).size > 1) {
+      return this.graphList.map((price) => {
+        if (new Set(this.graphList).size > 1) {
           return 5 + ((price - min) / (max - min)) * 95;
         } else {
           return 5;
         }
       });
+    },
+
+    tickerPaginate() {
+      const filteredTickers = this.tickerList.filter((ticker) => {
+        return ticker.name.includes(this.filter);
+      });
+      const [min, max] = [(this.pageNumber - 1) * 6, 6 * this.pageNumber];
+
+      this.haveNextPage = filteredTickers.length > max ? true : false;
+
+      return filteredTickers.splice(min, max);
     },
   },
 };
