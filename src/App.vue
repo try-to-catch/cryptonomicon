@@ -1,8 +1,10 @@
 <template>
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
     <div
+      :class="{
+        hidden: !spinner,
+      }"
       class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center"
-      style="display: none"
     >
       <svg
         class="animate-spin -ml-1 mr-3 h-12 w-12 text-white"
@@ -36,6 +38,7 @@
               <input
                 v-model="ticker"
                 @keydown.enter="add"
+                @input="findCoins"
                 type="text"
                 name="wallet"
                 id="wallet"
@@ -43,31 +46,22 @@
                 placeholder="Например DOGE"
               />
             </div>
-            <!-- <div
+            <div
+              v-if="suggestedCoins.length"
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
+                v-for="coin in suggestedCoins"
+                :key="coin"
+                @click="coinSelect(coin)"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
               >
-                BTC
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                DOGE
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                BCH
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                CHD
+                {{ coin }}
               </span>
             </div>
-            <div class="text-sm text-red-600">Такой тикер уже добавлен</div> -->
+            <div v-if="coinExist" class="text-sm text-red-600">
+              Такой тикер уже добавлен
+            </div>
           </div>
         </div>
         <button
@@ -150,7 +144,7 @@
           ></div>
         </div>
         <button
-          @click="sel = null"
+          @click="stopGraphInterval(sel)"
           type="button"
           class="absolute top-0 right-0"
         >
@@ -188,44 +182,107 @@ export default {
     return {
       ticker: "",
       tickers: [],
+      symbols: [],
       sel: null,
       graph: [],
+      graph_intevals: new Map(),
+      all_coins: [],
+      spinner: false,
+      suggestedCoins: [],
+      coinExist: false,
     };
+  },
+
+  created: async function () {
+    this.spinner = true;
+    const f = await (
+      await fetch(
+        "https://min-api.cryptocompare.com/data/all/coinlist?summary=true"
+      )
+    ).json();
+
+    const data = f.Data;
+
+    for (let item in data) {
+      this.all_coins.push(data[item].Symbol);
+    }
+    this.spinner = false;
   },
   methods: {
     add() {
-      const currentTicker = {
-        name: this.ticker.toUpperCase(),
-        price: "-",
-      };
+      if (
+        !this.symbols.includes(this.ticker.toUpperCase()) &&
+        this.ticker.length
+      ) {
+        const currentTicker = {
+          name: this.ticker.toUpperCase(),
+          price: "-",
+        };
 
-      this.ticker = "";
+        this.ticker = "";
+        this.suggestedCoins = [];
+        this.coinExist = false;
 
-      this.tickers.unshift(currentTicker);
+        this.tickers.unshift(currentTicker);
+        this.symbols.unshift(currentTicker.name);
 
-      setInterval(async () => {
-        const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?api_key=332085343d8a65df11a3cd19b5de67a1eec48fca7b634bf58c2f8e77a8e7c88d&tsyms=USD&fsym=${currentTicker.name}`
+        this.graph_intevals.set(
+          currentTicker.name,
+          setInterval(async () => {
+            const f = await fetch(
+              `https://min-api.cryptocompare.com/data/price?api_key=332085343d8a65df11a3cd19b5de67a1eec48fca7b634bf58c2f8e77a8e7c88d&tsyms=USD&fsym=${currentTicker.name}`
+            );
+
+            const data = await f.json();
+
+            this.tickers.find((t) => t.name === currentTicker.name).price =
+              data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
+
+            if (this.sel?.name == currentTicker.name) {
+              this.graph.push(data.USD);
+            }
+          }, 5000)
         );
+      } else {
+        this.coinExist = true;
+      }
+    },
 
-        const data = await f.json();
+    stopGraphInterval(interval) {
+      clearInterval(this.graph_intevals.get(interval.name));
 
-        this.tickers.find((t) => t.name === currentTicker.name).price =
-          data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
+      this.graph_intevals.delete(interval.name);
+    },
 
-        if (this.sel?.name == currentTicker.name) {
-          this.graph.push(data.USD);
-        }
-      }, 5000);
+    coinSelect(symbol) {
+      this.ticker = symbol;
+      this.add();
+    },
+
+    findCoins() {
+      this.coinExist = false;
+      this.suggestedCoins = [];
+      if (this.ticker.length) {
+        this.suggestedCoins = this.all_coins
+          .filter((coin) => {
+            if (this.suggestedCoins.length >= 4) {
+              return false;
+            }
+            return String(coin).includes(this.ticker.toUpperCase());
+          })
+          .slice(0, 4);
+      }
     },
 
     handleDelete(tickerToRemouve) {
+      if (this.sel?.name == tickerToRemouve.name) {
+        this.stopGraphInterval(tickerToRemouve);
+        this.sel = null;
+      }
       this.tickers = this.tickers.filter((t) => t !== tickerToRemouve);
     },
 
     selected(ticker) {
-      console.log(ticker);
-
       this.sel = ticker;
       this.graph = [];
     },
