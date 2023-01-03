@@ -47,11 +47,11 @@
               />
             </div>
             <div
-              v-if="suggestedCoins.length"
+              v-if="suggestedCurrency.length"
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
-                v-for="coin in suggestedCoins"
+                v-for="coin in suggestedCurrency"
                 :key="coin"
                 @click="addSelectedCoin(coin)"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
@@ -59,7 +59,7 @@
                 {{ coin }}
               </span>
             </div>
-            <div v-if="isCoinExist" class="text-sm text-red-600">
+            <div v-if="isCurrencyExist" class="text-sm text-red-600">
               Такой тикер уже добавлен
             </div>
           </div>
@@ -132,7 +132,7 @@
                 {{ ticker.name }} - USD
               </dt>
               <dd class="mt-1 text-3xl font-semibold text-gray-900">
-                {{ ticker.price }}
+                {{ formatPrice(ticker.price) }}
               </dd>
             </div>
             <div class="w-full border-t border-gray-200"></div>
@@ -205,6 +205,12 @@
 </template>
 
 <script>
+import {
+  subscribeToTicker,
+  unsubscribeFromTicker,
+  getAllCurrencies,
+} from "./api";
+
 export default {
   name: "App",
   data() {
@@ -212,12 +218,11 @@ export default {
       ticker: "",
       filter: "",
 
-      tickerIntervalsList: new Map(),
       tickerList: [],
-      selectedCoinList: [],
+      selectedCurrencies: [],
       graphList: [],
-      possibleCoins: [],
-      suggestedCoins: [],
+      possibleCurrency: [],
+      suggestedCurrency: [],
 
       isPageLoading: false,
 
@@ -262,8 +267,8 @@ export default {
       });
     },
 
-    isCoinExist() {
-      return this.selectedCoinList.includes(this.ticker.toUpperCase());
+    isCurrencyExist() {
+      return this.selectedCurrencies.includes(this.ticker.toUpperCase());
     },
 
     pageStateOptions() {
@@ -295,51 +300,46 @@ export default {
       this.tickerList = JSON.parse(tickersData);
 
       this.tickerList.forEach((ticker) => {
-        this.selectedCoinList.unshift(ticker.name);
+        this.selectedCurrencies.unshift(ticker.name);
 
-        this.tickerIntervalsList.set(
-          ticker.name,
-          this.setTickersInterval(ticker.name)
-        );
+        subscribeToTicker(ticker.name, (newPrice) => {
+          this.updateTicker(ticker.name, newPrice);
+        });
       });
     }
-    const f = await (
-      await fetch(
-        "https://min-api.cryptocompare.com/data/all/coinlist?summary=true"
-      )
-    ).json();
 
-    const data = f.Data;
+    const data = await getAllCurrencies();
 
     for (let item in data) {
-      this.possibleCoins.push(data[item].Symbol);
+      this.possibleCurrency.push(data[item].Symbol);
     }
     this.isPageLoading = false;
   },
 
   methods: {
-    setTickersInterval(tickersName) {
-      return setInterval(async () => {
-        const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?api_key=332085343d8a65df11a3cd19b5de67a1eec48fca7b634bf58c2f8e77a8e7c88d&tsyms=USD&fsym=${tickersName}`
-        );
+    formatPrice(price) {
+      if (price == "-") {
+        return price;
+      }
 
-        const data = await f.json();
+      return price > 1 ? price.toFixed(2) : price.toPrecision(2);
+    },
 
-        this.tickerList.find((t) => t.name === tickersName).price =
-          data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
+    async updateTicker(tickerName, price) {
+      this.tickerList
+        .filter((ticker) => ticker.name === tickerName)
+        .forEach((t) => (t.price = price));
 
-        if (this.selectedTicker?.name == tickersName) {
-          this.graphList.push(data.USD);
-        }
-      }, 5000);
+      if (this.selectedTicker?.name == tickerName) {
+        this.graphList.push(price);
+      }
     },
 
     addNewTicker() {
       if (
-        this.possibleCoins.includes(this.ticker.toUpperCase()) &&
+        this.possibleCurrency.includes(this.ticker.toUpperCase()) &&
         this.ticker.length &&
-        !this.isCoinExist
+        !this.isCurrencyExist
       ) {
         const currentTicker = {
           name: this.ticker.toUpperCase(),
@@ -347,27 +347,26 @@ export default {
         };
 
         this.ticker = "";
+        this.filter = "";
 
         this.tickerList = [currentTicker, ...this.tickerList];
-        this.selectedCoinList.unshift(currentTicker.name);
+        this.selectedCurrencies.unshift(currentTicker.name);
 
-        this.tickerIntervalsList.set(
-          currentTicker.name,
-          this.setTickersInterval(currentTicker.name)
-        );
+        subscribeToTicker(currentTicker.name, (newPrice) => {
+          this.updateTicker(currentTicker.name, newPrice);
+        });
       }
     },
 
-    addSelectedCoin(symbol) {
-      this.ticker = symbol;
+    addSelectedCoin(currency) {
+      this.ticker = currency;
       this.addNewTicker();
     },
 
     deleteTicker(ticker) {
-      clearInterval(this.tickerIntervalsList.get(ticker.name));
-
-      this.tickerIntervalsList.delete(ticker.name);
       this.tickerList = this.tickerList.filter((t) => t !== ticker);
+
+      unsubscribeFromTicker(ticker);
 
       if (this.selectedTicker?.name == ticker.name) {
         this.selectedTicker = null;
@@ -393,10 +392,10 @@ export default {
     },
 
     ticker() {
-      this.suggestedCoins = [];
+      this.suggestedCurrency = [];
 
       if (this.ticker.length) {
-        this.suggestedCoins = this.possibleCoins
+        this.suggestedCurrency = this.possibleCurrency
           .filter((coin) => {
             return String(coin).includes(this.ticker.toUpperCase());
           })
