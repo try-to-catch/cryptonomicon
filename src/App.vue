@@ -365,6 +365,9 @@ export default {
 
     deleteTicker(ticker) {
       this.tickerList = this.tickerList.filter((t) => t !== ticker);
+      this.selectedCurrencies = this.selectedCurrencies.filter(
+        (c) => c != ticker.name
+      );
 
       unsubscribeFromTicker(ticker);
 
