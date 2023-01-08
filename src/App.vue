@@ -47,11 +47,11 @@
               />
             </div>
             <div
-              v-if="suggestedCurrency.length"
+              v-if="suggestedCurrencies.length"
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
-                v-for="coin in suggestedCurrency"
+                v-for="coin in suggestedCurrencies"
                 :key="coin"
                 @click="addSelectedCoin(coin)"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
@@ -124,6 +124,7 @@
             @click="selectedTicker = ticker"
             :class="{
               'border-4': selectedTicker === ticker,
+              'bg-red-100': ticker.price === '-',
             }"
             class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
           >
@@ -138,7 +139,7 @@
             <div class="w-full border-t border-gray-200"></div>
             <button
               @click.stop="deleteTicker(ticker)"
-              class="flex items-center justify-center font-medium w-full bg-gray-100 px-4 py-4 sm:px-6 text-md text-gray-500 hover:text-gray-600 hover:bg-gray-200 hover:opacity-20 transition-all focus:outline-none"
+              class="flex items-center justify-center font-medium w-full bg-gray-100 px-4 py-4 sm:px-6 text-md text-gray-500 hover:text-gray-600 hover:bg-gray-200 transition-all focus:outline-none"
             >
               <svg
                 class="h-5 w-5"
@@ -162,14 +163,18 @@
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
           {{ selectedTicker.name }} - USD
         </h3>
-        <div class="flex items-end border-gray-600 border-b border-l h-64">
+        <div
+          class="flex items-end border-gray-600 border-b border-l h-64"
+          ref="graph"
+        >
           <div
             v-for="(bar, idx) in normalizedGraph"
             :key="idx"
             :style="{
               height: bar + '%',
+              width: graphWidth + 'px',
             }"
-            class="bg-purple-800 border w-10"
+            class="bg-purple-800 border"
           ></div>
         </div>
         <button
@@ -221,22 +226,27 @@ export default {
       tickerList: [],
       selectedCurrencies: [],
       graphList: [],
-      possibleCurrency: [],
-      suggestedCurrency: [],
+      possibleCurrencies: [],
+      suggestedCurrencies: [],
 
       isPageLoading: false,
 
       selectedTicker: null,
+
       page: 1,
+      currencyPerPage: 6,
+
+      maxGraphElements: 0,
+      graphWidth: 38,
     };
   },
   computed: {
     startIndex() {
-      return (this.page - 1) * 6;
+      return (this.page - 1) * this.currencyPerPage;
     },
 
     endIndex() {
-      return 6 * this.page;
+      return this.currencyPerPage * this.page;
     },
 
     filteredTickers() {
@@ -311,12 +321,27 @@ export default {
     const data = await getAllCurrencies();
 
     for (let item in data) {
-      this.possibleCurrency.push(data[item].Symbol);
+      this.possibleCurrencies.push(data[item].Symbol);
     }
     this.isPageLoading = false;
   },
+  mounted: function () {
+    window.addEventListener("resize", this.calculateMaxGraphElements);
+  },
+
+  beforeUnmount: function () {
+    window.removeEventListener("resize", this.calculateMaxGraphElements);
+  },
 
   methods: {
+    calculateMaxGraphElements() {
+      if (this.$refs.graph) {
+        this.maxGraphElements = Math.round(
+          this.$refs.graph.clientWidth / this.graphWidth
+        );
+      }
+    },
+
     formatPrice(price) {
       if (price == "-") {
         return price;
@@ -331,13 +356,19 @@ export default {
         .forEach((t) => (t.price = price));
 
       if (this.selectedTicker?.name == tickerName) {
+        // debugger;
         this.graphList.push(price);
+
+        const offset = this.graphList.length - this.maxGraphElements;
+        if (offset > 0) {
+          this.graphList = this.graphList.slice(offset);
+        }
       }
     },
 
     addNewTicker() {
       if (
-        this.possibleCurrency.includes(this.ticker.toUpperCase()) &&
+        this.possibleCurrencies.includes(this.ticker.toUpperCase()) &&
         this.ticker.length &&
         !this.isCurrencyExist
       ) {
@@ -392,13 +423,15 @@ export default {
 
     selectedTicker: function () {
       this.graphList = [];
+
+      this.$nextTick().then(this.calculateMaxGraphElements);
     },
 
     ticker() {
-      this.suggestedCurrency = [];
+      this.suggestedCurrencies = [];
 
       if (this.ticker.length) {
-        this.suggestedCurrency = this.possibleCurrency
+        this.suggestedCurrencies = this.possibleCurrencies
           .filter((coin) => {
             return String(coin).includes(this.ticker.toUpperCase());
           })
