@@ -64,7 +64,6 @@ export default {
 
   emits: {
     "add-ticker": (value) => typeof value === "string" && value.length > 0,
-    "ticker-input-change": (value) => typeof value === "string",
   },
 
   data() {
